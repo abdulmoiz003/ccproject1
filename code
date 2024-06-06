@@ -1,0 +1,176 @@
+#include <iostream>
+#include <vector>
+#include <cctype>
+#include <string>
+#include <memory>
+#include <stdexcept>
+
+enum TokenType {
+	NUMBER,
+	PLUS,
+	MINUS,
+	MULTIPLY,
+	DIVIDE,
+	LEFT_PAREN,
+	RIGHT_PAREN,
+	END
+};
+
+struct Token {
+	TokenType type;
+	double value;
+};
+
+class Lexer {
+public:
+	Lexer(const std::string& input) : input(input), pos(0) {}
+
+	Token getNextToken() {
+		while (pos < input.size() && isspace(input[pos])) pos++;
+		if (pos >= input.size()) return { END, 0 };
+
+		char currentChar = input[pos];
+
+		if (isdigit(currentChar) || currentChar == '.') {
+			return number();
+		}
+
+		switch (currentChar) {
+		case '+': pos++; return { PLUS, 0 };
+		case '-': pos++; return { MINUS, 0 };
+		case '*': pos++; return { MULTIPLY, 0 };
+		case '/': pos++; return { DIVIDE, 0 };
+		case '(': pos++; return { LEFT_PAREN, 0 };
+		case ')': pos++; return { RIGHT_PAREN, 0 };
+		default: throw std::runtime_error("Unknown token");
+		}
+	}
+
+private:
+	Token number() {
+		std::string numStr;
+		while (pos < input.size() && (isdigit(input[pos]) || input[pos] == '.')) {
+			numStr += input[pos++];
+		}
+		return { NUMBER, std::stod(numStr) };
+	}
+
+	std::string input;
+	size_t pos;
+};
+
+struct ASTNode {
+	virtual ~ASTNode() = default;
+};
+
+struct NumberNode : ASTNode {
+	double value;
+	NumberNode(double value) : value(value) {}
+};
+
+struct BinaryOpNode : ASTNode {
+	std::unique_ptr<ASTNode> left;
+	std::unique_ptr<ASTNode> right;
+	TokenType op;
+	BinaryOpNode(std::unique_ptr<ASTNode> left, std::unique_ptr<ASTNode> right, TokenType op)
+		: left(std::move(left)), right(std::move(right)), op(op) {}
+};
+
+class Parser {
+public:
+	Parser(Lexer& lexer) : lexer(lexer), currentToken(lexer.getNextToken()) {}
+
+	std::unique_ptr<ASTNode> parse() {
+		return expr();
+	}
+
+private:
+	std::unique_ptr<ASTNode> expr() {
+		auto node = term();
+		while (currentToken.type == PLUS || currentToken.type == MINUS) {
+			TokenType op = currentToken.type;
+			currentToken = lexer.getNextToken();
+			node = std::make_unique<BinaryOpNode>(std::move(node), term(), op);
+		}
+		return node;
+	}
+
+	std::unique_ptr<ASTNode> term() {
+		auto node = factor();
+		while (currentToken.type == MULTIPLY || currentToken.type == DIVIDE) {
+			TokenType op = currentToken.type;
+			currentToken = lexer.getNextToken();
+			node = std::make_unique<BinaryOpNode>(std::move(node), factor(), op);
+		}
+		return node;
+	}
+
+	std::unique_ptr<ASTNode> factor() {
+		if (currentToken.type == NUMBER) {
+			auto node = std::make_unique<NumberNode>(currentToken.value);
+			currentToken = lexer.getNextToken();
+			return node;
+		}
+		else if (currentToken.type == LEFT_PAREN) {
+			currentToken = lexer.getNextToken();
+			auto node = expr();
+			if (currentToken.type != RIGHT_PAREN) {
+				throw std::runtime_error("Missing closing parenthesis");
+			}
+			currentToken = lexer.getNextToken();
+			return node;
+		}
+		else {
+			throw std::runtime_error("Unexpected token");
+		}
+	}
+
+	Lexer& lexer;
+	Token currentToken;
+};
+
+class Evaluator {
+public:
+	double evaluate(const std::unique_ptr<ASTNode>& node) {
+		if (auto numberNode = dynamic_cast<NumberNode*>(node.get())) {
+			return numberNode->value;
+		}
+		else if (auto binOpNode = dynamic_cast<BinaryOpNode*>(node.get())) {
+			double left = evaluate(binOpNode->left);
+			double right = evaluate(binOpNode->right);
+			switch (binOpNode->op) {
+			case PLUS: return left + right;
+			case MINUS: return left - right;
+			case MULTIPLY: return left * right;
+			case DIVIDE: return left / right;
+			default: throw std::runtime_error("Unknown binary operator");
+			}
+		}
+		else {
+			throw std::runtime_error("Unknown AST node");
+		}
+	}
+};
+
+int main() {
+	std::string input;
+	std::cout << "Enter an expression: ";
+	std::getline(std::cin, input);
+
+	try {
+		Lexer lexer(input);
+		Parser parser(lexer);
+		auto ast = parser.parse();
+
+		Evaluator evaluator;
+		double result = evaluator.evaluate(ast);
+
+		std::cout << "Result: " << result << std::endl;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+	}
+
+	return 0;
+}
+
